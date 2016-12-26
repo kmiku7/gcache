@@ -26,8 +26,36 @@ func (c *LRUCache) init() {
 	c.items = make(map[interface{}]*list.Element, c.size+1)
 }
 
+func (c *LRUCache) checkExpirationAndRemoveElement(e *list.Element, now *time.Time) bool {
+	entry := e.Value.(*lruItem)
+	if !entry.IsExpired(now) {
+		return false
+	}
+	c.evictList.Remove(e)
+	delete(c.items, entry.key)
+	if c.evictedFunc != nil {
+		entry := e.Value.(*lruItem)
+		(*c.evictedFunc)(entry.key, entry.value)
+	}
+	return true
+}
+
+// check expiration and evict removes the oldest item from the cache.
+func (c *LRUCache) checkExpirationAndEvict(count int, now *time.Time) {
+	for i := 0; i < count; i++ {
+		ent := c.evictList.Back()
+		if ent == nil {
+			return
+		}
+		if evicted := c.checkExpirationAndRemoveElement(ent, now); !evicted {
+			return
+		}
+	}
+}
+
 func (c *LRUCache) set(key, value interface{}) (interface{}, error) {
 	// Check for existing item
+	now := time.Now()
 	var item *lruItem
 	if it, ok := c.items[key]; ok {
 		c.evictList.MoveToFront(it)
@@ -46,8 +74,9 @@ func (c *LRUCache) set(key, value interface{}) (interface{}, error) {
 	}
 
 	if c.expiration != nil {
-		t := time.Now().Add(*c.expiration)
+		t := now.Add(*c.expiration)
 		item.expiration = &t
+		c.checkExpirationAndEvict(1, &now)
 	}
 
 	if c.addedFunc != nil {
